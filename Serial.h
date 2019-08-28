@@ -65,18 +65,20 @@ typedef char CHAR;
 typedef unsigned char	UCHAR;
 typedef unsigned int	UINT32, *PUINT32;
 
-typedef struct _INFO_T {
-	DWORD	Nand_uPagePerBlock;
-	DWORD	Nand_uPageSize;
-	DWORD   Nand_uSectorPerBlock;
-	DWORD   Nand_uBlockPerFlash;
-	DWORD	Nand_uBadBlockCount;
-	DWORD   Nand_uSpareSize;
-	DWORD   SPI_ID;
-	DWORD   EMMC_uBlock;
-	DWORD   EMMC_uReserved;
-	DWORD	MTP_uNumber;
+typedef struct __attribute__((__packed__)) _INFO_T {
+	UINT32  Nand_uPagePerBlock;
+	UINT32  Nand_uPageSize;
+	UINT32  Nand_uSectorPerBlock;
+	UINT32  Nand_uBlockPerFlash;
+	UINT32  Nand_uBadBlockCount;
+	UINT32  Nand_uSpareSize;
+	UINT32  Nand_uIsUserConfig;
+	UINT32  SPI_ID;
+	UINT32  EMMC_uBlock;
+	UINT32  EMMC_uReserved;
+	UINT32  MTP_uNumber;
 } INFO_T,*PINFO_T;
+
 
 typedef struct _PACK_CHILD_HEAD {
 	DWORD filelen;

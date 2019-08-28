@@ -67,9 +67,10 @@ void print_using()
 }
 int main(int argc, char **argv)
 {
-
 	/* Initial */
 	char *path;
+	int exitcode =0;
+
 	type = -1;
 	DDR_fileName[0]='\0';
 	exe_addr=0xffffffff;
@@ -79,7 +80,15 @@ int main(int argc, char **argv)
 	read_tag = 0;
 	verify_tag = 0;
 	dtb_tag = 0;
+
+	usb_bus_cmdline = -1;
+	usb_port_cmdline = -1;
+	char execute_on_finish_buf[256];
+	ssize_t execute_on_finish_len=0;
+
 	int cmd_opt = 0;
+	memset(execute_on_finish_buf,0, sizeof(execute_on_finish_buf));
+
 	memcpy(Data_Path,argv[0],strlen(argv[0]));
 	path=strrchr(Data_Path,'/');
 	if(path==NULL) {
@@ -101,7 +110,7 @@ int main(int argc, char **argv)
 	//fprintf(stderr, "argc:%d\n", argc);
 	while(1) {
 		//fprintf(stderr, "proces index:%d\n", optind);
-		cmd_opt = getopt(argc, argv, "a:d:e:i:nvhw:r:t:m:z::");
+		cmd_opt = getopt(argc, argv, "a:d:e:i:nvhw:r:t:m:z::u:p:x:");
 
 		/* End condition always first */
 		if (cmd_opt == -1) {
@@ -131,6 +140,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "-t env         Set Environemnt Type\n");
 			fprintf(stderr, "-t uboot       Set uBoot Type\n");
 			fprintf(stderr, "-t pack        Set PACK Type\n");
+			fprintf(stderr, "\n");
 			fprintf(stderr, "SDRAM parameters:\n");
 			fprintf(stderr, "-a [value]     Set execute address\n");
 			fprintf(stderr, "-w [File]      Write image file to SDRAM\n");
@@ -145,6 +155,11 @@ int main(int argc, char **argv)
 			fprintf(stderr, "-e [value]     Read/Erase length(unit of block)\n");
 			fprintf(stderr, "-e 0xFFFFFFFF  Chip erase\n");
 			fprintf(stderr, "-v             Verify image file after Write image \n");
+			fprintf(stderr, "\n");
+			fprintf(stderr, "Mass production parameters:\n");
+			fprintf(stderr, "-u [value]     USB bus \n");
+			fprintf(stderr, "-p [value]     USB port\n");
+			fprintf(stderr, "-x [File]      Execute external program");
 			fprintf(stderr, "\n============================================\n");
 			return 0;
 		case 'n':
@@ -152,6 +167,16 @@ int main(int argc, char **argv)
 			break;
 
 		/* Single arg */
+		case 'u':
+			usb_bus_cmdline=strtoul(optarg,NULL,0);
+			break;
+		case 'p':
+			usb_port_cmdline=strtoul(optarg,NULL,0);
+			break;
+		case 'x':
+			execute_on_finish_len=snprintf(execute_on_finish_buf, sizeof(execute_on_finish_buf), "%s", optarg);
+			break;
+
 		case 'a':
 			exe_addr=strtoul(optarg,NULL,0);
 			break;
@@ -312,13 +337,55 @@ int main(int argc, char **argv)
 	}
 
 	libusb_init(NULL);
-	if(ParseFlashType()< 0) {
-		printf("Failed\n");
+	while(1)
+	{
+		if ((usb_bus_cmdline !=-1) && (usb_port_cmdline != -1)) {
+			char *c=strrchr(write_file, '/');
+			c=(c==NULL)? write_file : c+1;
+			printf("[Connect new device to Bus %d port %d] file: '%s'\n",
+					usb_bus_cmdline, usb_port_cmdline, c);
+			// wait for new device
+			while(!NUC_IsDeviceConnectedToBP(usb_bus_cmdline, usb_port_cmdline))
+				sleep(1);
+		}
+
+		usb_bus_auto = usb_bus_cmdline;
+		usb_port_auto = usb_port_cmdline;
+
+		if (execute_on_finish_len!=0)
+		{
+			execute_on_finish_buf[execute_on_finish_len] = 0;
+			system(execute_on_finish_buf);
+		}
+
+		if (ParseFlashType()< 0) {
+			printf("Failed\n");
+			exitcode = -1;
+		}
+		else {
+			printf("Done\n");
+			exitcode = 0;
+		}
+
 		NUC_CloseUsb();
-		libusb_exit(NULL);
-		return -1;
+		if (execute_on_finish_len!=0)
+		{
+			snprintf(&execute_on_finish_buf[execute_on_finish_len],
+					sizeof(execute_on_finish_buf) - execute_on_finish_len,
+					" %d", exitcode);
+			system(execute_on_finish_buf);
+		}
+		if ((usb_bus_cmdline ==-1) || (usb_port_cmdline == -1))
+			break;
+
+		printf("[Unplug device from Bus %d port %d]\n", usb_bus_cmdline, usb_port_cmdline);
+
+		// wait for unplug
+		while(NUC_IsDeviceConnectedToBP(usb_bus_cmdline, usb_port_cmdline))
+			sleep(1);
+		//sleep(4);
 	}
-	NUC_CloseUsb();
+
 	libusb_exit(NULL);
-	return 0;
+	return exitcode;
 }

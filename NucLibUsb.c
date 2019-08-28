@@ -3,10 +3,14 @@
 
 int NUC_SetType(int id,int type)
 {
-	unsigned int ack=0;
-	do {
+	unsigned char ack[2] = {0, 0};
+	int res=0;
 
-		libusb_control_transfer(handle,
+	/* Waiting the last work done before switching */
+	usleep(90 * 1000u);
+	do {
+		usleep(10 * 1000u);
+		res = libusb_control_transfer(handle,
 		                        0x40, /* requesttype */
 		                        BURN, /* request */
 		                        BURN_TYPE+(unsigned int)type, /* wValue */
@@ -14,16 +18,24 @@ int NUC_SetType(int id,int type)
 		                        NULL,
 		                        0, /* wLength */
 		                        USB_TIMEOUT);
-		libusb_control_transfer(handle,
+		if (res < 0) {
+			MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__, libusb_error_name(res));
+			return res;
+		}
+		res = libusb_control_transfer(handle,
 		                        0xC0, /* requesttype */
 		                        BURN, /* request */
 		                        BURN_TYPE+(unsigned int)type, /* wValue */
 		                        0, /* wIndex */
 		                        (unsigned char *)&ack,
-		                        (unsigned short)sizeof(unsigned int), /* wLength */
+		                        (uint16_t)sizeof(ack), /* wLength */
 		                        USB_TIMEOUT);
-
-	} while((unsigned char)(ack&0xFF)!=(BURN_TYPE+type));
+		if (res < 0) {
+			MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__,libusb_error_name(res));
+			return res;
+		}
+	}
+    while(ack[0] != (BURN_TYPE + type));
 	return 0;
 }
 
@@ -35,7 +47,7 @@ int NUC_ReadPipe(int id,unsigned char *buf,int len)
 	ret = libusb_bulk_transfer(handle, USB_ENDPOINT_IN, buf, len,
 	                           &nread, USB_TIMEOUT);
 	if (ret) {
-		MSG_DEBUG("ERROR in bulk read: %d\n", ret);
+		MSG_DEBUG("ERROR in bulk read: %s\n", libusb_error_name(ret));
 		return -1;
 	} else {
 		//MSG_DEBUG("receive %d bytes from device\n", nread);
@@ -49,7 +61,7 @@ int NUC_WritePipe(int id,unsigned char *buf,int len)
 	int ret;
 	int nwrite;
 
-	libusb_control_transfer(handle,
+	ret = libusb_control_transfer(handle,
 	                        0x40, /* requesttype */
 	                        0xA0, /* request */
 	                        0x12, /* wValue */
@@ -57,68 +69,150 @@ int NUC_WritePipe(int id,unsigned char *buf,int len)
 	                        buf,
 	                        0, /* wLength */
 	                        USB_TIMEOUT);
-
+	if (ret < 0) {
+			MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__, libusb_error_name(ret));
+			return ret;
+	}
 
 	//write transfer
 	//probably unsafe to use n twice...
 	ret = libusb_bulk_transfer(handle, USB_ENDPOINT_OUT, buf, len, &nwrite, USB_TIMEOUT);
 	//Error handling
-	switch(ret) {
-	case 0:
-		//MSG_DEBUG("send %d bytes to device\n", len);
-		return 0;
-	case LIBUSB_ERROR_TIMEOUT:
-		printf("ERROR in bulk write: %d Timeout\n", ret);
-		break;
-	case LIBUSB_ERROR_PIPE:
-		printf("ERROR in bulk write: %d Pipe\n", ret);
-		break;
-	case LIBUSB_ERROR_OVERFLOW:
-		printf("ERROR in bulk write: %d Overflow\n", ret);
-		break;
-	case LIBUSB_ERROR_NO_DEVICE:
-		printf("ERROR in bulk write: %d No Device\n", ret);
-		break;
-	default:
-		printf("ERROR in bulk write: %d\n", ret);
-		break;
+	if (ret < 0)
+		printf("ERROR in bulk write: %s\n", libusb_error_name(ret));
 
+	return ret;
+}
+
+int NUC_IsDeviceConnectedToBP(int bus, int port)
+{
+	int ret=0, found=0;
+	uint8_t ibus, iport;
+	ssize_t i;
+
+	struct libusb_device **devs;
+	ssize_t count;
+	count = libusb_get_device_list(NULL, &devs);
+	for (i = 0; i < count; i++) {
+		struct libusb_device_descriptor desc;
+		//memset(&desc, 0, sizeof(desc));
+		ret = libusb_get_device_descriptor(devs[i], &desc);
+		if (ret !=0)
+			continue;
+
+		if ((desc.idVendor == USB_VENDOR_ID) &&	(desc.idProduct == USB_PRODUCT_ID)) {
+			ibus = libusb_get_bus_number(devs[i]);
+			iport = libusb_get_port_number(devs[i]);
+			if ((bus == ibus) && (port == iport)) {
+				found=1;
+				break;
+			}
+		}
 	}
-	return 0;
+	libusb_free_device_list(devs, 0);
+	return found;
+}
+
+static int NUC_OpenUsb_priv(int *bus, int *port, int suppres_nodev)
+{
+	int ret=0;
+	uint8_t ibus, iport;
+	ssize_t i;
+	struct libusb_device **devs;
+	ssize_t count;
+
+	if (handle != NULL) return 0;
+
+	count = libusb_get_device_list(NULL, &devs);
+	for (i = 0; i < count; i++) {
+		struct libusb_device_descriptor desc;
+		memset(&desc, 0, sizeof(desc));
+
+		ret = libusb_get_device_descriptor(devs[i], &desc);
+		if (ret !=0)
+			continue;
+
+		if ((desc.idVendor == USB_VENDOR_ID) &&	(desc.idProduct == USB_PRODUCT_ID)) {
+			ibus = libusb_get_bus_number(devs[i]);
+			if ((*bus != -1) && (*bus != ibus))
+				continue;
+			iport = libusb_get_port_number(devs[i]);
+			if ((*port != -1) && (*port != iport))
+				continue;
+
+			ret = libusb_open(devs[i], &handle);
+			if (ret == 0)
+				break;
+
+		}
+	}
+	libusb_free_device_list(devs, 0);
+	if (!handle) {
+		if (!suppres_nodev)
+			fprintf(stderr, "device not found\n");
+		return -1;
+	}
+	*bus = ibus;
+	*port = iport;
+
+//#ifdef _WIN32
+		libusb_set_auto_detach_kernel_driver(handle, 1);
+//#endif
+	ret = libusb_claim_interface(handle, 0);
+	if (ret != 0) {
+		fprintf(stderr, "usb_claim_interface error: %s\n", libusb_error_name(ret));
+		libusb_close(handle);
+		handle = NULL;
+		ret = -2;
+	}
+
+	return ret;
 }
 
 int NUC_OpenUsb(void)
 {
-	int ret=0;
-	//libusb_device_handle * handle2=NULL;
+	int b, p, ret;
+	if (handle != NULL) return 0;
 
-	if(handle!=NULL) return 0;
-	//Open Device with VendorID and ProductID
-	handle = libusb_open_device_with_vid_pid(ctx,
-	         USB_VENDOR_ID, USB_PRODUCT_ID);
-	if (!handle) {
-		perror("device not found");
-		ret=-1;
-		libusb_exit(NULL);
-		return -1;
+	b = usb_bus_cmdline;
+	p = usb_port_cmdline;
+	ret = NUC_OpenUsb_priv(&b, &p, 0);
+	if (ret==0) {
+		usb_bus_auto = b;
+		usb_port_auto = p;
+		printf("Device on bus %d : port %d\n",b, p);
 	}
-#ifdef _WIN32
-	libusb_set_auto_detach_kernel_driver(handle, 1);
-	ret = libusb_claim_interface(handle, 0);
-	if (ret < 0) {
-		fprintf(stderr, "usb_claim_interface error %d\n", ret);
-		return -1;
+	return ret;
+}
+
+int NUC_OpenUsbRetry(int retrycount)
+{
+	int b, p, ret;
+	if (handle != NULL) return 0;
+
+	MSG_DEBUG("NUC_OpenUsbRetry: bus=%d port=%d\n", usb_bus_auto, usb_port_auto);
+
+	b= usb_bus_auto;
+	p= usb_port_auto;
+
+	do {
+		MSG_DEBUG("Connecting to xusb...%d\n", retrycount);
+		ret = NUC_OpenUsb_priv(&b, &p, 1);
+		if (ret != -1)
+			break;
+		sleep(1);
 	}
-#endif
-	return 0;
+	while (--retrycount);
+	return ret;
 }
 
 void NUC_CloseUsb(void)
 {
-#ifdef _WIN32
-	libusb_release_interface(handle, 0);
-#endif
-	libusb_close(handle);
-	handle=NULL;
+	if (handle)
+	{
+		libusb_release_interface(handle, 0);
+		libusb_close(handle);
+		handle=NULL;
+	}
 }
 

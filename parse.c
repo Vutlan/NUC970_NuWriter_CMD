@@ -9,58 +9,69 @@ int init_xusb(void)
 	int ret=0;
 	char DDR[256];
 	char XUSB[256];
-	int bResult,dlen,xlen;
+	int bResult,dlen=0,xlen;
 	unsigned char *dbuf=NULL,*xbuf=NULL;
 
-	ret=NUC_OpenUsb();
-	if(ret<0) return -1;
+	if (NUC_OpenUsb() != 0) return -1;
 
 	sprintf(DDR,"%s/sys_cfg/%s",Data_Path,DDR_fileName);
-	dbuf=load_ddr(DDR,&dlen);
-	if(dbuf==NULL) {
+	dbuf=load_ddr(DDR, &dlen);
+	if (dbuf==NULL) {
 		ret=-1;
 		goto EXIT;
 	}
-	bResult=DDRtoDevice(dbuf,dlen);
-	if(bResult==RUN_ON_XUSB) {
+	bResult=DDRtoDevice(dbuf, dlen);
+	if (bResult==RUN_ON_XUSB) {
 		ret=bResult;
 		goto EXIT;
 	}
-	if(bResult<0) {
+	if (bResult<0) {
 		printf("init_xusb:Burn DDR to Device failed,bResult=%d\n",bResult);
 		ret=bResult;
 		goto EXIT;
 	}
-	if(DDR_fileName[strlen(DDR_fileName)-7]=='7') {
+	if (DDR_fileName[strlen(DDR_fileName)-7] == '7') {
 		MSG_DEBUG("load xusb128.bin\n");
 		sprintf(XUSB,"%s/xusb128.bin",Data_Path);
-	} else if(DDR_fileName[strlen(DDR_fileName)-7]=='6') {
+	} else if(DDR_fileName[strlen(DDR_fileName)-7] == '6') {
 		MSG_DEBUG("load xusb64.bin\n");
 		sprintf(XUSB,"%s/xusb64.bin",Data_Path);
-	} else  if(DDR_fileName[strlen(DDR_fileName)-7]=='5') {
+	} else  if(DDR_fileName[strlen(DDR_fileName)-7] == '5') {
 		MSG_DEBUG("load xusb32.bin\n");
-		sprintf(XUSB,"%s/xusb.bin",Data_Path);
+		sprintf(XUSB,"%s/xusb.bin", Data_Path);
 	} else {
 		MSG_DEBUG("load xusb16.bin\n");
-		sprintf(XUSB,"%s/xusb16.bin",Data_Path);
+		sprintf(XUSB,"%s/xusb16.bin", Data_Path);
 	}
-	xbuf=load_xusb(XUSB,&xlen);
-	if(xbuf==NULL) {
+	xbuf = load_xusb(XUSB, &xlen);
+	if (xbuf==NULL) {
 		printf("Cannot find xusb.bin\n");
 		ret=-1;
 		goto EXIT;
 	}
-	if(XUSBtoDevice(xbuf,xlen)<0) {
+	if (XUSBtoDevice(xbuf, xlen) < 0) {
 		printf("Burn XUSB to Device failed\n");
 		ret=-1;
 		goto EXIT;
 	}
-	sleep(2);
 	NUC_CloseUsb();
-	ret=NUC_OpenUsb();
-	if(ret<0) return -1;
+	//libusb_exit(NULL);
+	printf("xusb downloaded to device\n");
+	sleep(7); // device disconnect and xusb connect
+
+	//libusb_init(NULL);
+	ret = NUC_OpenUsbRetry(9);
+	if (ret < 0)
+		ret = -1;
+	else
+		usleep(100);
+
 EXIT:
-	usleep(100);
+	if (xbuf)
+		free(xbuf);
+	if (dbuf)
+		free(dbuf);
+
 	return ret;
 }
 
@@ -71,7 +82,7 @@ int ParseFlashType(void)
 		printf("initail xusb failed %d\n",ret);
 		return -1;
 	}
-
+	printf("xusb initialised\n");
 	if(InfoFromDevice()<0) {
 		printf(" Get information failed for Device\n");
 		return -1;

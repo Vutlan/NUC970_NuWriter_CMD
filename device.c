@@ -4,21 +4,44 @@
 #include <unistd.h>  /* getopt */
 #include <ctype.h>  /* isprint */
 
+
+
 int DDRtoDevice(unsigned char *buf,unsigned int len)
 {
-
 	unsigned int ack=0;
+	int ret;
 	AUTOTYPEHEAD head;
+
 	head.address=DDRADDRESS;
 	head.filelen=len;
 	MSG_DEBUG("head.address=0x%08x,head.filelen=%d\n",head.address,head.filelen);
-	NUC_WritePipe(0,(unsigned char*)&head,sizeof(AUTOTYPEHEAD));
-	NUC_WritePipe(0,(unsigned char *)buf,len);
-	NUC_ReadPipe(0,(unsigned char *)&ack,(int)sizeof(unsigned int));
-	if(ack==(BUF_SIZE+1))	return RUN_ON_XUSB;
-	NUC_ReadPipe(0,(unsigned char *)&ack,(int)sizeof(unsigned int));
+
+	ret = NUC_WritePipe(0,(unsigned char*)&head,sizeof(AUTOTYPEHEAD));
+	if (ret <0) {
+		MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__, libusb_error_name(ret));
+	}
+
+	ret = NUC_WritePipe(0,(unsigned char *)buf,len);
+	if (ret <0) {
+		MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__, libusb_error_name(ret));
+	}
+
+	ret = NUC_ReadPipe(0,(unsigned char *)&ack,(int)sizeof(unsigned int));
+	if (ret <0) {
+		MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__, libusb_error_name(ret));
+		return -1;
+	}
+	if(ack==(BUF_SIZE+1)) {
+		MSG_DEBUG("RUN ON XUSB\n");
+		return RUN_ON_XUSB;
+	}
+
+	ret = NUC_ReadPipe(0,(unsigned char *)&ack,(int)sizeof(unsigned int));
+	if (ret <0) {
+		MSG_DEBUG("[%s:%d] %s\n",__FUNCTION__, __LINE__, libusb_error_name(ret));
+	}
 	if(ack!=0x55AA55AA) return -1;
-	MSG_DEBUG("ack=0x%08x\n",ack);
+	//MSG_DEBUG("ack=0x%08x\n",ack);
 	return 0;
 }
 
@@ -88,28 +111,62 @@ typedef struct _INFO_T {
 int InfoFromDevice(void)
 {
 	int bResult;
+	int exitcode =0;
+
 	if(NUC_OpenUsb()<0) return -1;
 	NUC_SetType(0,INFO);
+
+	m_info.Nand_uIsUserConfig = 0;
 
 	m_info.Nand_uPagePerBlock =  0;//Nand_uPagePerBlock;
 	m_info.Nand_uBlockPerFlash = 0;//Nand_uBlockPerFlash;
 
 	m_info.Nand_uPagePerBlock =  0;
 	m_info.Nand_uBlockPerFlash = 0;
-	bResult=NUC_WritePipe(0,(UCHAR *)&m_info, sizeof(INFO_T));
-	if(bResult<0) goto EXIT;
-	bResult=NUC_ReadPipe(0,(UCHAR *)&m_info, sizeof(INFO_T));
-	if(bResult<0) goto EXIT;
 
-	MSG_DEBUG("Nand_uPagePerBlock=%d\n",m_info.Nand_uPagePerBlock);
-	MSG_DEBUG("Nand_uPageSize=%d\n",m_info.Nand_uPageSize);
-	MSG_DEBUG("Nand_uSectorPerBlock=%d\n",m_info.Nand_uSectorPerBlock);
-	MSG_DEBUG("Nand_uBlockPerFlash=%d\n",m_info.Nand_uBlockPerFlash);
-	MSG_DEBUG("Nand_uBadBlockCount=%d\n",m_info.Nand_uBadBlockCount);
-	return 0;
+	bResult=NUC_WritePipe(0,(UCHAR *)&m_info, sizeof(m_info));
+	if (bResult<0) {
+		exitcode = -1;
+		goto EXIT;
+	}
+	bResult=NUC_ReadPipe(0,(UCHAR *)&m_info, sizeof(m_info));
+	if (bResult<0) {
+		exitcode = -1;
+		goto EXIT;
+	}
+
+	switch(mode) {
+	case SPI_M:
+		printf("SPI_ID=0x%x\n",m_info.SPI_ID);
+		if ((m_info.SPI_ID == 0) || (m_info.SPI_ID ==0xffff)) {
+			printf("Bad flash ID\n");
+			exitcode = -2;
+			goto EXIT;
+		}
+		break;
+	case NAND_M:
+		printf("Nand_uPagePerBlock=%d\n",m_info.Nand_uPagePerBlock);
+		printf("Nand_uPageSize=%d\n",m_info.Nand_uPageSize);
+		printf("Nand_uSectorPerBlock=%d\n",m_info.Nand_uSectorPerBlock);
+		printf("Nand_uBlockPerFlash=%d\n",m_info.Nand_uBlockPerFlash);
+		printf("Nand_uBadBlockCount=%d\n",m_info.Nand_uBadBlockCount);
+		break;
+	default:
+		printf("Nand_uPagePerBlock=%d\n",m_info.Nand_uPagePerBlock);
+		printf("Nand_uPageSize=%d\n",m_info.Nand_uPageSize);
+		printf("Nand_uSectorPerBlock=%d\n",m_info.Nand_uSectorPerBlock);
+		printf("Nand_uBlockPerFlash=%d\n",m_info.Nand_uBlockPerFlash);
+		printf("Nand_uBadBlockCount=%d\n",m_info.Nand_uBadBlockCount);
+		printf("Nand_uSpareSize=%d\n",m_info.Nand_uSpareSize);
+		printf("Nand_uIsUserConfig=%d\n",m_info.Nand_uIsUserConfig);
+		printf("SPI_ID=0x%x\n",m_info.SPI_ID);
+		printf("EMMC_uBlock=%d\n",m_info.EMMC_uBlock);
+		printf("EMMC_uReserved=%d\n",m_info.EMMC_uReserved);
+		printf("MTP_uNumber=%d\n",m_info.MTP_uNumber);
+	} // switch(mode)
+
 EXIT:
-
-	return -1;
+	return exitcode;
 }
 
 #if 0

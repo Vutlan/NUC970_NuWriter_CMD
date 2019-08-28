@@ -25,7 +25,7 @@ void show_progressbar(int pos)
 	progress[51]='|';
 	progress[52]='\0';
 	printf("%3d%c%s\r",pos,0x25,progress);
-	if(pos==100) {
+	if(pos>=100) {
 		memset(progress,' ',128);
 		progress[127]='\0';
 		printf("%s\r",progress);
@@ -53,6 +53,82 @@ unsigned char *GetDDRFormat(unsigned int *len)
 	*((unsigned int *)(ddrbuf+4))=(dlen/8);        /* len */
 	memcpy((ddrbuf+8),dbuf,dlen);
 	return ddrbuf;
+}
+/*
+ * *buf - pack buffer
+ * filelen - pack lengtg
+ */
+#define PACK_FORMAT_HEADER (16)
+#define BOOT_HEADER        (16)  // 0x20 'T' 'V' 'N'
+#define DDR_INITIAL_MARKER  (4)  // 0x55 0xAA 0x55 0xAA
+#define DDR_COUNTER         (4)  // DDR parameter length
+int CheckDDRiniData(unsigned char *buf, int filelen)
+{
+	int ret =0;
+	char DDR[256];
+	unsigned char *dbuf=NULL;
+	int i, j, ini_idx, ddr_cnt, start_idx = 0, ddr_len = 0;
+	int dlen, compare_len;
+
+	// Check DDR *ini
+	i = PACK_FORMAT_HEADER; // PACK Header 16
+	ini_idx = 0;
+	ddr_cnt = 0;
+	// Find DDR Initial Marker
+	while(i < filelen)
+	{
+		if((buf[i] == 0x20) && (buf[i+1] == 'T') && (buf[i+2] == 'V') && (buf[i+3] == 'N'))
+		{
+			if ((buf[i+BOOT_HEADER] == 0x55) &&
+				(buf[i+BOOT_HEADER+1] == 0xaa) &&
+				(buf[i+BOOT_HEADER+2] == 0x55) &&
+				(buf[i+BOOT_HEADER+3] == 0xaa))
+			{
+				ini_idx = (i+BOOT_HEADER); // Found DDR
+				ddr_cnt = (((buf[ini_idx+7]&0xff) << 24) | ((buf[ini_idx+6]&0xff) << 16) |
+						  ((buf[ini_idx+5]&0xff) << 8)   | ((buf[ini_idx+4]&0xff)));
+				ddr_len = ddr_cnt*8;
+				MSG_DEBUG("ini_idx:0x%x(%d)  ddr_cnt =0x%x(%d)\n",
+						ini_idx, ini_idx, ddr_cnt, ddr_cnt);
+				break;
+			}
+		}
+	    i++;
+	}
+
+	sprintf(DDR,"%s/sys_cfg/%s",Data_Path, DDR_fileName);
+	dbuf=load_ddr(DDR, &dlen);
+
+	if (!dbuf) {
+		ret = -2;
+		goto EXIT;
+	}
+
+	if ( (dlen==0)||(ddr_len==0) ) {
+		ret = -1;
+		goto EXIT;
+	}
+
+	compare_len = (ddr_len < dlen)? ddr_len : dlen;
+
+	//j = 0;
+	// Compare DDR *ini content
+	start_idx = ini_idx+DDR_INITIAL_MARKER+DDR_COUNTER;//ini_idx+8
+
+	for(i = start_idx, j=0; i < (start_idx + compare_len); i++)
+	{
+		if(buf[i] != dbuf[j++])
+		{
+			MSG_DEBUG("DDR parameter error! buf[%d]= 0x%x, dbuf[%d]=0x%x\n",
+						i, buf[i], j, dbuf[j]);
+			ret = -1;
+		}
+	}
+
+EXIT:
+	if (dbuf)
+		free(dbuf);
+    return ret;
 }
 
 int UXmodem_SDRAM(void)
@@ -138,7 +214,7 @@ int UXmodem_Pack(void)
 	unsigned int scnt,rcnt,file_len,ack,total;
 	unsigned char *pbuf;
 	unsigned int magic;
-	char* lpBuffer;
+	unsigned char* lpBuffer;
 	PACK_HEAD *ppackhead;
 	PACK_CHILD_HEAD child;
 	int posnum,burn_pos;
@@ -161,22 +237,32 @@ int UXmodem_Pack(void)
 	fseek(fp,0,SEEK_END);
 	file_len=ftell(fp);
 	fseek(fp,0,SEEK_SET);
-	if(!file_len) {
+	if (!file_len) {
 		fclose(fp);
 		printf("File length is zero\n");
 		goto EXIT;
 	}
 	lpBuffer = (unsigned char *)malloc(sizeof(unsigned char)*file_len); //read file to buffer
-	memset(lpBuffer,0xff,file_len);
 	memset((unsigned char *)m_fhead,0,sizeof(NORBOOT_MMC_HEAD));
-	if(mode!=EMMC_M) {
+	//memset(lpBuffer,0xff,file_len);
+	fread(lpBuffer,file_len, 1, fp);
+	fclose(fp);
+
+	// Check DDR *ini
+	bResult=CheckDDRiniData(lpBuffer, file_len);
+	if (bResult!=0) {
+		printf("WARNING! DDR Init select error\n");
+		//goto EXIT;
+	}
+
+	if (mode!=EMMC_M) {
 		((NORBOOT_NAND_HEAD *)m_fhead)->flag=PACK_ACTION;
 		((NORBOOT_NAND_HEAD *)m_fhead)->type=type;
 		((NORBOOT_NAND_HEAD *)m_fhead)->initSize=0;
 		((NORBOOT_NAND_HEAD *)m_fhead)->filelen=file_len;
 		bResult=NUC_WritePipe(0,(UCHAR *)m_fhead, sizeof(NORBOOT_NAND_HEAD));
 		bResult=NUC_ReadPipe(0,(unsigned char *)&ack,(int)sizeof(unsigned int));
-		fread(lpBuffer,((NORBOOT_NAND_HEAD *)m_fhead)->filelen,1,fp);
+		//fread(lpBuffer,((NORBOOT_NAND_HEAD *)m_fhead)->filelen,1,fp);
 	} else {
 		((NORBOOT_MMC_HEAD *)m_fhead)->flag=PACK_ACTION;
 		((NORBOOT_MMC_HEAD *)m_fhead)->type=type;
@@ -184,11 +270,8 @@ int UXmodem_Pack(void)
 		((NORBOOT_MMC_HEAD *)m_fhead)->filelen=file_len;
 		bResult=NUC_WritePipe(0,(UCHAR *)m_fhead, sizeof(NORBOOT_MMC_HEAD));
 		bResult=NUC_ReadPipe(0,(unsigned char *)&ack,(int)sizeof(unsigned int));
-		fread(lpBuffer,((NORBOOT_MMC_HEAD *)m_fhead)->filelen,1,fp);
+		//fread(lpBuffer,((NORBOOT_MMC_HEAD *)m_fhead)->filelen,1,fp);
 	}
-
-
-	fclose(fp);
 
 	pbuf = lpBuffer;
 	ppackhead=(PACK_HEAD *)lpBuffer;
@@ -212,26 +295,31 @@ int UXmodem_Pack(void)
 		rcnt=child.filelen%BUF_SIZE;
 		total=0;
 
+		//MSG_DEBUG("[%s:%d] scnt=%d rcnt=%d\n",__FUNCTION__, __LINE__,scnt,rcnt);
+		usleep(10*1000);
 		while(scnt>0) {
 			bResult=NUC_WritePipe(0,(UCHAR *)pbuf, BUF_SIZE);
 			if(bResult<0) goto EXIT;
+
+			bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
+			if(bResult<0) goto EXIT;
+
 			pbuf+=BUF_SIZE;
 			total+=BUF_SIZE;
 			pos=(int)(((float)(((float)total/(float)child.filelen))*100));
 			printf("Pack image%d ... ",i);
 			show_progressbar(pos);
-			bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
-			if(bResult<0) goto EXIT;
 			scnt--;
 		}
 		if(rcnt>0) {
-
 			bResult=NUC_WritePipe(0,(UCHAR *)pbuf,rcnt);
 			if(bResult<0) goto EXIT;
-			pbuf+=rcnt;
-			total+=rcnt;
+
 			bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
 			if(bResult<0) goto EXIT;
+
+			pbuf+=rcnt;
+			total+=rcnt;
 			pos=(int)(((float)(((float)total/(float)child.filelen))*100));
 			printf("Pack image%d ... ",i);
 			show_progressbar(pos);
@@ -617,12 +705,60 @@ int UXmodem_SPI(void)
 	char* lpBuffer;
 	unsigned int burn_pos;
 	char *type_name[] = {"DATA","ENV","UBOOT","PACK"};
+	char* erase_msg_arr[] = {"Erase All ","Erase ... "};
+	char* erase_msg;
 	m_fhead=malloc(sizeof(NORBOOT_NAND_HEAD));
 
 	if(NUC_OpenUsb()<0) return -1;
+
 	NUC_SetType(0,SPI);
 
+	if(erase_tag==1) {  //Erase SPI
+		int wait_pos=0;
+		unsigned int erase_pos=0;
+		m_fhead->flag=ERASE_ACTION;
+		m_fhead->flashoffset = exe_addr; //start erase block
+		m_fhead->execaddr=erase_read_len;  //erase block length
+
+		/* Decide chip erase mode or erase mode                    */
+		/* 0: chip erase, 1: erase accord start and length blocks. */
+		if(erase_read_len==0xFFFFFFFF) {
+			m_fhead->type=0;
+			m_fhead->no=0xffffffff;//erase all
+			erase_msg= erase_msg_arr[0];
+		} else {
+			m_fhead->type=1;
+			m_fhead->no=0;
+			erase_msg= erase_msg_arr[1];
+		}
+
+		bResult=NUC_WritePipe(0,(UCHAR *)m_fhead, sizeof(NORBOOT_NAND_HEAD));
+		bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
+		erase_pos=0;
+		printf("%s",erase_msg);
+		show_progressbar(erase_pos);
+
+		while(1) {
+			bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
+			if (bResult<0) goto EXIT;
+			if (ack == 0xffffffff) goto EXIT;
+			erase_pos = ack & 0xffff;
+			printf("%s",erase_msg);
+			show_progressbar(erase_pos);
+			if (erase_pos >=100) {
+				show_progressbar(100);
+				break;
+			}
+			usleep(250*1000);
+		}
+
+		printf("Erase ... Passed\n");
+		usleep(500*1000);
+		NUC_SetType(0,SPI);
+	}
+
 	if(type==PACK) {
+		//MSG_DEBUG("[%s:%d]\n",__FUNCTION__, __LINE__);
 		if(UXmodem_Pack()<0) goto EXIT;
 	} else {
 
@@ -898,47 +1034,6 @@ int UXmodem_SPI(void)
 #endif
 		}
 
-
-		if(erase_tag==1) {  //Erase SPI
-			int wait_pos=0;
-			unsigned int erase_pos=0;
-			m_fhead->flag=ERASE_ACTION;
-			m_fhead->flashoffset = exe_addr; //start erase block
-			m_fhead->execaddr=erase_read_len;  //erase block length
-
-			/* Decide chip erase mode or erase mode                    */
-			/* 0: chip erase, 1: erase accord start and length blocks. */
-			if(erase_read_len==0xFFFFFFFF) {
-				m_fhead->type=0;
-				m_fhead->no=0xffffffff;//erase all
-			} else {
-				m_fhead->type=1;
-				m_fhead->no=0;
-			}
-
-			bResult=NUC_WritePipe(0,(UCHAR *)m_fhead, sizeof(NORBOOT_NAND_HEAD));
-			bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
-			erase_pos=0;
-			printf("Erase ... ");
-			show_progressbar(erase_pos);
-			while(erase_pos!=100) {
-				bResult=NUC_ReadPipe(0,(UCHAR *)&ack,4);
-				if(bResult<0) goto EXIT;
-				if(((ack>>16)&0xffff)) goto EXIT;
-				erase_pos=ack&0xffff;
-				printf("Erase ... ");
-				show_progressbar(erase_pos);
-				if(erase_pos==95) {
-					wait_pos++;
-					if(wait_pos>100) {
-						goto EXIT;
-					}
-				}
-
-			}
-			show_progressbar(100);
-			printf("Erase ... Passed\n");
-		}
 	}
 
 	return 0;

@@ -57,7 +57,9 @@ extern char * load_xusb(char *FilePath,int *len);
 
 
 /* NuclibUsb.c */
+extern int NUC_IsDeviceConnectedToBP(int bus, int port);
 extern int NUC_OpenUsb(void);
+extern int NUC_OpenUsbRetry(int retrycount);
 extern void NUC_CloseUsb(void);
 extern int NUC_SetType(int id,int type);
 extern int NUC_ReadPipe(int id,unsigned char *buf,int len);
@@ -100,7 +102,13 @@ unsigned int dtb_addr;
 
 struct _INFO_T m_info;
 
+int usb_bus_cmdline;
+int usb_bus_auto;
+int usb_port_cmdline;
+int usb_port_auto;
+
 libusb_context *ctx;
 libusb_device_handle *handle;
+
 
 #endif
