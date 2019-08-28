@@ -110,5 +110,4 @@ int usb_port_auto;
 libusb_context *ctx;
 libusb_device_handle *handle;
 
-
 #endif

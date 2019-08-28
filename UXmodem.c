@@ -504,7 +504,7 @@ int UXmodem_NAND(void)
 							strncpy(ptr,line,strlen(line)-1);
 							ptr[strlen(line)-2]=0x0;
 							ptr+=(strlen(line)-1);
-						}else if(line[strlen(line)-1]==0x0A) {
+						} else if(line[strlen(line)-1]==0x0A) {
 							strncpy(ptr,line,strlen(line));
 							ptr[strlen(line)-1]=0x0;
 							ptr+=(strlen(line));
@@ -888,7 +888,7 @@ int UXmodem_SPI(void)
 							strncpy(ptr,line,strlen(line)-1);
 							ptr[strlen(line)-2]=0x0;
 							ptr+=(strlen(line)-1);
-						}else if(line[strlen(line)-1]==0x0A) {
+						} else if(line[strlen(line)-1]==0x0A) {
 							strncpy(ptr,line,strlen(line));
 							ptr[strlen(line)-1]=0x0;
 							ptr+=(strlen(line));
@@ -1190,7 +1190,7 @@ int UXmodem_EMMC(void)
 							strncpy(ptr,line,strlen(line)-1);
 							ptr[strlen(line)-2]=0x0;
 							ptr+=(strlen(line)-1);
-						}else if(line[strlen(line)-1]==0x0A) {
+						} else if(line[strlen(line)-1]==0x0A) {
 							strncpy(ptr,line,strlen(line));
 							ptr[strlen(line)-1]=0x0;
 							ptr+=(strlen(line));
